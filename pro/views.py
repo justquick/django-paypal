@@ -93,51 +93,50 @@ class PayPalPro(object):
 
     def __call__(self, request):
         """Return the appropriate response for the state of the transaction."""
-        self.request = request
         if request.method == "GET":
-            if self.should_redirect_to_express():
-                return self.redirect_to_express()
-            elif self.should_render_confirm_form():
-                return self.render_confirm_form()
-            elif self.should_render_payment_form():
-                return self.render_payment_form() 
+            if self.should_redirect_to_express(request):
+                return self.redirect_to_express(request)
+            elif self.should_render_confirm_form(request):
+                return self.render_confirm_form(request)
+            elif self.should_render_payment_form(request):
+                return self.render_payment_form(request)
         else:
-            if self.should_validate_confirm_form():
-                return self.validate_confirm_form()
-            elif self.should_validate_payment_form():
-                return self.validate_payment_form()
+            if self.should_validate_confirm_form(request):
+                return self.validate_confirm_form(request)
+            elif self.should_validate_payment_form(request):
+                return self.validate_payment_form(request)
         
         # Default to the rendering the payment form.
-        return self.render_payment_form()
+        return self.render_payment_form(request)
 
     def is_recurring(self):
         return self.item is not None and 'billingperiod' in self.item
 
-    def should_redirect_to_express(self):
-        return 'express' in self.request.GET
+    def should_redirect_to_express(self, request):
+        return 'express' in request.GET
         
-    def should_render_confirm_form(self):
-        return 'token' in self.request.GET and 'PayerID' in self.request.GET
+    def should_render_confirm_form(self, request):
+        return 'token' in request.GET and 'PayerID' in request.GET
         
     def should_render_payment_form(self):
         return True
 
     def should_validate_confirm_form(self):
-        return 'token' in self.request.POST and 'PayerID' in self.request.POST  
+        return 'token' in request.POST and 'PayerID' in request.POST  
         
     def should_validate_payment_form(self):
         return True
 
-    def render_payment_form(self):
+    def render_payment_form(self, request):
         """Display the DirectPayment for entering payment information."""
         self.context[self.form_context_name] = self.payment_form_cls()
-        return render_to_response(self.payment_template, self.context, RequestContext(self.request))
+        return render_to_response(self.payment_template, self.context, RequestContext(request))
 
-    def validate_payment_form(self):
+    def validate_payment_form(self, request):
         """Try to validate and then process the DirectPayment form."""
-        form = self.payment_form_cls(self.request.POST)        
+        form = self.payment_form_cls(request.POST)
         if form.is_valid():
-            success = form.process(self.request, self.item)
+            success = form.process(request, self.item)
             if success:
                 payment_was_successful.send(sender=self.item)
                 return HttpResponseRedirect(self.success_url)
@@ -146,7 +145,7 @@ class PayPalPro(object):
 
         self.context[self.form_context_name] = form
         self.context.setdefault("errors", self.errors['form'])
-        return render_to_response(self.payment_template, self.context, RequestContext(self.request))
+        return render_to_response(self.payment_template, self.context, RequestContext(request))
 
     def get_endpoint(self):
         if TEST:
@@ -154,16 +153,16 @@ class PayPalPro(object):
         else:
             return EXPRESS_ENDPOINT
 
-    def redirect_to_express(self):
+    def redirect_to_express(self, request):
         """
         First step of ExpressCheckout. Redirect the request to PayPal using the 
         data returned from setExpressCheckout.
         """
-        wpp = PayPalWPP(self.request)
+        wpp = PayPalWPP(request)
         nvp_obj = wpp.setExpressCheckout(self.item)
         if not nvp_obj.flag:
-            pp_params = dict(token=nvp_obj.token, AMT=self.item['amt'], 
-                             RETURNURL=self.item['returnurl'], 
+            pp_params = dict(token=nvp_obj.token, AMT=self.item['amt'],
+                             RETURNURL=self.item['returnurl'],
                              CANCELURL=self.item['cancelurl'])
             pp_url = self.get_endpoint() % urlencode(pp_params)
             return HttpResponseRedirect(pp_url)
@@ -171,22 +170,22 @@ class PayPalPro(object):
             self.context['errors'] = self.errors['paypal']
             return self.render_payment_form()
 
-    def render_confirm_form(self):
+    def render_confirm_form(self, request):
         """
         Second step of ExpressCheckout. Display an order confirmation form which
         contains hidden fields with the token / PayerID from PayPal.
         """
-        initial = dict(token=self.request.GET['token'], PayerID=self.request.GET['PayerID'])
+        initial = dict(token=request.GET['token'], PayerID=request.GET['PayerID'])
         self.context[self.form_context_name] = self.confirm_form_cls(initial=initial)
-        return render_to_response(self.confirm_template, self.context, RequestContext(self.request))
+        return render_to_response(self.confirm_template, self.context, RequestContext(request))
 
-    def validate_confirm_form(self):
+    def validate_confirm_form(self, request):
         """
         Third and final step of ExpressCheckout. Request has pressed the confirmation but
         and we can send the final confirmation to PayPal using the data from the POST'ed form.
         """
-        wpp = PayPalWPP(self.request)
-        pp_data = dict(token=self.request.POST['token'], payerid=self.request.POST['PayerID'])
+        wpp = PayPalWPP(request)
+        pp_data = dict(token=request.POST['token'], payerid=request.POST['PayerID'])
         self.item.update(pp_data)
         
         # @@@ This check and call could be moved into PayPalWPP.
